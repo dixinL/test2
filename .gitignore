@@ -1,0 +1,7 @@
+# test2 数据/缓存不入库：
+# - leaders.db (80MB+ 且每日增长，SQLite 无法 git 增量，CI 每日全量重建)
+# - general-data/env/ 为 test1 快照的下载缓存（可随时重建）
+# - rightside/report/ 由 CI 生成并提交，本地重跑会覆盖
+leaders.db
+general-data/env/
+__pycache__/
