@@ -9,6 +9,7 @@
     python refresh.py --financial-since 2022Q1  # 财报回填起点
     python refresh.py --daily-since 2026-09-15 # 日线回填起点（近1个月补缺）
     python refresh.py --limit 3              # 只处理前 N 只（调试/小样本验证）
+    python refresh.py --purge                 # 清除 5 年窗口外行情并 VACUUM
     python refresh.py --stats                # 只打印各表覆盖情况，不刷新
 
 写入全部幂等：daily/adjust_factor 历史行永不重写（存不复权价，除权只进因子
@@ -29,6 +30,7 @@ import leadersdb
 FULL_START = '2020-01-01'          # daily 首灌起点
 FULL_FIN_YEAR, FULL_FIN_QUARTER = 2020, 1   # 财报首灌起点
 INDEX_CODE = 'sh.000001'           # 上证综指（大盘环境判定用）
+RETAIN_YEARS = 5                   # 滚动保留窗口（--purge 清除窗口外行情）
 
 
 def current_quarter(today: date) -> tuple[int, int]:
@@ -128,6 +130,26 @@ def refresh_financial(conn, leaders, since=None, recent_quarters=2) -> dict:
     return {'ok': ok, 'failed': failed, 'upserted': upserted}
 
 
+def purge_old_data(conn, today: date) -> int:
+    """清除滚动窗口（RETAIN_YEARS 年）外的行情数据并 VACUUM 瘦身。
+
+    只动 daily / index_daily（有 trade_date 的大表）；财报/因子/维表量小
+    且与窗口无关，不清。删除发生才 VACUUM。返回删除行数。"""
+    cutoff = today.replace(year=today.year - RETAIN_YEARS).isoformat()
+    deleted = 0
+    for table in ('daily', 'index_daily'):
+        cur = conn.execute(
+            'DELETE FROM {} WHERE trade_date < ?'.format(table), (cutoff,))
+        deleted += cur.rowcount
+    if deleted:
+        conn.commit()
+        conn.execute('VACUUM')
+        conn.commit()
+    print('[refresh] purge: cutoff {} · 删除 {} 行{}'.format(
+        cutoff, deleted, '（已 VACUUM 瘦身）' if deleted else ''))
+    return deleted
+
+
 def refresh_index(conn) -> int:
     """上证综指日线增量刷新：从库内 max_date+1 拉到今天，INSERT OR IGNORE。
     返回新增行数。"""
@@ -172,6 +194,8 @@ def main() -> int:
                         help='日线回填起点 YYYY-MM-DD（如近1个月：从该日强制拉到今天，幂等补缺）')
     parser.add_argument('--limit', type=int, default=None,
                         help='只处理前 N 只股票（调试用）')
+    parser.add_argument('--purge', action='store_true',
+                        help='清除 {} 年滚动窗口外的行情数据并 VACUUM（CI 每年 5 月 1 日执行）'.format(RETAIN_YEARS))
     parser.add_argument('--stats', action='store_true',
                         help='只打印各表覆盖情况，不刷新')
     args = parser.parse_args()
@@ -211,6 +235,9 @@ def main() -> int:
         refresh_financial(conn, leaders, since=since)
 
     refresh_index(conn)
+
+    if args.purge:
+        purge_old_data(conn, date.today())
 
     conn.close()
     bs.logout()

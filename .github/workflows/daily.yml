@@ -34,7 +34,11 @@ jobs:
 
       - name: 刷新基础数据（baostock：个股日线+因子+近两季财报+上证指数）
         working-directory: general-data
-        run: python refresh.py
+        # 每年 5 月 1 日附带清除 5 年滚动窗口外的行情数据（保留 5 年）
+        run: |
+          PURGE=""
+          if [ "$(date +%-m)" = "5" ] && [ "$(date +%-d)" = "1" ]; then PURGE="--purge"; fi
+          python refresh.py $PURGE
 
       - name: 拉取 test1 环境快照（增量）
         working-directory: general-data
@@ -51,14 +55,14 @@ jobs:
           WXPUSHER_UIDS: ${{ secrets.WXPUSHER_UIDS }}
         run: python run.py
 
-      - name: 提交报告
+      - name: 提交报告与数据库
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add rightside/report/ analysis-hub/report/ 2>/dev/null || true
+          git add rightside/report/ analysis-hub/report/ general-data/leaders.db 2>/dev/null || true
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "auto: 右侧判定报告 $(date +%Y-%m-%d)"
+            git commit -m "auto: 右侧判定报告+基础数据 $(date +%Y-%m-%d)"
             git push
           fi
