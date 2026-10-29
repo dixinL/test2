@@ -144,6 +144,19 @@ def _md_to_html(md):
                 i += 1
             out.append(_build_html_table(rows))
             continue
+        # 代码块 -> 等宽 <pre>（近30日色块走势图依赖等宽对齐）
+        if t.startswith('```'):
+            buf = []
+            i += 1
+            while i < len(lines) and lines[i].strip() != '```':
+                buf.append(lines[i])
+                i += 1
+            i += 1
+            out.append('<pre style="margin:4px 0;font-family:Consolas,\'Courier New\',monospace;'
+                       'font-size:12px;line-height:1.3;background:#f7f7f7;'
+                       'padding:6px 8px;border-radius:4px;">'
+                       + _html.escape('\n'.join(buf)) + '</pre>')
+            continue
         if not t:
             out.append('<br/>')
             i += 1
