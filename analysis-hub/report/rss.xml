@@ -5,8 +5,16 @@
     <link>https://dixinl.github.io/test2/analysis-hub/report/</link>
     <description>每日自动汇总：市场环境快照 + 个股右侧三态判定（弱右侧/确认右侧名单与状态起点）</description>
     <language>zh-CN</language>
-    <lastBuildDate>Thu, 29 Oct 2026 17:16:57 +0800</lastBuildDate>
+    <lastBuildDate>Fri, 30 Oct 2026 08:58:24 +0800</lastBuildDate>
     <atom:link href="https://dixinl.github.io/test2/analysis-hub/report/rss.xml" rel="self" type="application/rss+xml"/>
+    <item>
+      <title>test2 工具总览 - 2026-10-29</title>
+      <link>https://dixinl.github.io/test2/analysis-hub/report/overview_2026-10-29.md</link>
+      <description><![CDATA[<p>统计: 弱右侧 2只 · 左侧 306只</p>
+<p><a href="https://dixinl.github.io/test2/analysis-hub/report/overview_2026-10-29.md">查看完整总览：overview_2026-10-29.md</a></p>]]></description>
+      <pubDate>2026-10-30T08:58:24+08:00</pubDate>
+      <guid isPermaLink="true">https://dixinl.github.io/test2/analysis-hub/report/overview_2026-10-29.md</guid>
+    </item>
     <item>
       <title>test2 工具总览 - 2026-10-28</title>
       <link>https://dixinl.github.io/test2/analysis-hub/report/overview_2026-10-28.md</link>
