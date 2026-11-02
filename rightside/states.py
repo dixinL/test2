@@ -1,4 +1,4 @@
-"""状态观察记录：rightside 每日三态存 report/rightside_states.csv。
+"""状态观察记录：rightside 每日四态存 report/rightside_states.csv。
 
 - save_states(): 按判定日幂等重写当日行（重复运行无副作用）
 - load_day(): 读取某日全量行（含 name/sw2，供 analysis-hub 总览消费）

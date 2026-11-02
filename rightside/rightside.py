@@ -1,7 +1,8 @@
-"""个股右侧区间判定主逻辑（三态：左侧 / 弱右侧 / 确认右侧）。
+"""个股右侧区间判定主逻辑（四态：左侧 / 震荡 / 弱右侧 / 确认右侧）。
 
 一句话定义：右侧行情 = 下跌趋势终结、底部反转得到验证之后的上涨阶段；
-不是最低点，是拐点确认之后。仅技术分析思路，不构成投资建议。
+不是最低点，是拐点确认之后。震荡 = 下跌止住但反转未验证的横盘磨底段
+（左侧细分，X1~X3 形态条件成立且 P1 未创新低）。仅技术分析思路，不构成投资建议。
 
 价格类指标（均线/MACD/RSI/箱体/摆动低点）一律基于**现算前复权序列**；
 量能、状态（is_st/tradestatus/pct_chg）用原始字段。
@@ -17,9 +18,10 @@ from name_map import NAME_FIX
 
 WEAK_IDS = ['P1', 'P2', 'M1', 'M2', 'V1', 'E1', 'E2']
 STRONG_IDS = ['P1S', 'P2S', 'M1S', 'M2S', 'V1S', 'R1', 'E1S', 'E3']
-# 状态起点现算口径：逐日重判与状态列一致的三态；环境快照缺失的历史日
+# 状态起点现算口径：逐日重判与状态列一致的四态；环境快照缺失的历史日
 # E1/E2/E1S 为 ❓，视为"环境不否决"（不断开连续性），环境明确 ❌ 正常断开
 PRICE_WEAK = ['P1', 'P2', 'M1', 'M2', 'V1']
+OSC_IDS = ['X1', 'X2', 'X3']       # 震荡形态条件（左侧细分，见 classify）
 
 
 def build_context(conn, code: str, sw2: str, target: str, env_bundle: dict) -> dict:
@@ -97,10 +99,17 @@ def build_context(conn, code: str, sw2: str, target: str, env_bundle: dict) -> d
 
 
 def classify(results: dict) -> str:
-    """三态判定：确认右侧 > 弱右侧 > 价格达标(环境缺失) > 左侧。F1 未过 -> 排除。"""
+    """四态判定：确认右侧 > 弱右侧 > 价格达标(环境缺失) > 震荡 > 左侧。
+    F1 未过 -> 排除。震荡仅在弱档"价格"条件未过时判定（横盘磨底），
+    板块环境 ❌ 不产生震荡。"""
     if results.get('F1', {}).get('ok') is not True:
         return '排除'
-    if any(results[x]['ok'] is not True for x in WEAK_IDS):
+    if any(results[x]['ok'] is not True for x in PRICE_WEAK):
+        if (results['P1']['ok'] is not False
+                and all(results[x]['ok'] is True for x in OSC_IDS)):
+            return '震荡'
+        return '左侧'
+    if any(results[x]['ok'] is not True for x in ('E1', 'E2')):
         return '左侧'
     if any(results[x]['ok'] is None for x in ('E1', 'E2')):
         return '价格达标(环境缺失)'
@@ -123,6 +132,9 @@ def _walk_state(results: dict) -> str:
     → 确认右侧，否则弱右侧。"""
     for x in PRICE_WEAK:
         if results[x]['ok'] is False:
+            if (results['P1']['ok'] is not False
+                    and all(results[o]['ok'] is True for o in OSC_IDS)):
+                return '震荡'
             return '左侧'
     if results['E1']['ok'] is False or results['E2']['ok'] is False:
         return '左侧'
@@ -132,7 +144,7 @@ def _walk_state(results: dict) -> str:
 
 
 def state_start_real(ctx: dict, state: str):
-    """从基础数据现算状态起点：在完整日线上逐日重判三态（与状态列同
+    """从基础数据现算状态起点：在完整日线上逐日重判四态（与状态列同
     口径），取当前连续段起点。返回 (start_date, days, bounded)；
     bounded=True 表示回溯到可评估序列开头仍未翻转（真实起点更早）。"""
     dates = ctx['dates']

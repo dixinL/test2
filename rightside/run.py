@@ -23,7 +23,7 @@ import states  # noqa: E402
 
 REPORT_DIR = os.path.join(BASE_DIR, 'report')
 
-STATE_ORDER = ['确认右侧', '弱右侧', '价格达标(环境缺失)', '左侧', '排除']
+STATE_ORDER = ['确认右侧', '弱右侧', '价格达标(环境缺失)', '震荡', '左侧', '排除']
 
 
 def _env_note(env_date: str | None, target: str) -> str:
@@ -38,7 +38,7 @@ def print_detail(code: str, results: dict, state: str, trend_row: dict | None):
     """单股明细：逐条条件 + 明细值。"""
     print('\n=== {} 判定结果: {} ==='.format(code, state))
     order = ['F1', 'P1', 'P1S', 'P2', 'P2S', 'M1', 'M1S', 'M2', 'M2S',
-             'V1', 'V1S', 'R1', 'E1', 'E1S', 'E2', 'E3', 'F1F']
+             'V1', 'V1S', 'R1', 'X1', 'X2', 'X3', 'E1', 'E1S', 'E2', 'E3', 'F1F']
     for cid in order:
         r = results.get(cid)
         if not r:
@@ -83,7 +83,7 @@ def run_all(conn, target: str) -> int:
             note = rightside.failed_summary(results, state)
             if ctx.get('earnings_note'):
                 note = (note + '；' if note else '') + ctx['earnings_note']
-            # 状态起点：基础数据现算（与状态列同口径的三态连续段）。
+            # 状态起点：基础数据现算（与状态列同口径的四态连续段）。
             # 左侧是兜底态（弱档任一 ❌ 即左），连续段无信息量，不显示起点
             if state == '左侧':
                 starts[l['code']] = '-'
@@ -113,7 +113,7 @@ def _write_report(target, rows, env_date, market, trend_date, unmatched,
     lines = [
         '# 个股右侧区间判定 ({})'.format(target),
         '',
-        '> 判定口径: 左侧/弱右侧/确认右侧 三态（技术信号存在假突破，不构成投资建议）',
+        '> 判定口径: 左侧/震荡/弱右侧/确认右侧 四态（技术信号存在假突破，不构成投资建议）',
         '> 环境: {} | 趋势快照: {}'.format(
             _env_note(env_date, target) if env_date else '无环境快照',
             trend_date or '无'),

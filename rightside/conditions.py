@@ -3,6 +3,7 @@
 条件编号与定稿方案一致（首版默认参数，调参只改本文件常量）：
   P1 不再创新低 / P2 箱体与突破 / M1 均线 / M2 MACD / V1 量能 / R1 RSI
   E1 板块环境 / E2 拥挤度过滤 / E3 大盘环境 / F1 排雷
+  X1 MA20走平 / X2 贴线震荡 / X3 区间收敛（震荡形态，用于左侧细分）
 弱右侧/确认右侧的适用档位见各条件的 tier 说明。
 """
 from __future__ import annotations
@@ -24,6 +25,14 @@ SWING_LOW_DAYS = 20       # P1强: 摆动低点抬升回看窗口
 E1_WIDTH_MIN = 30         # E1弱: 板块宽度下限
 E2_CONG_MAX = 80          # E2: 板块拥挤度上限
 E1_CONFIRM_SCENES = {'S2', 'S4', 'S8'}   # E1强: 积极场景集
+
+# ---- 震荡判定（左侧细分：横盘磨底 vs 阴跌/破位，见 rightside.classify）----
+X_FLAT_DAYS = 5          # X1: MA20 走平回看天数
+X_FLAT_PCT = 0.01        # X1: MA20 该窗口变化率上限
+X_DEV_DAYS = 10          # X2: 贴线偏离回看天数
+X_DEV_MAX = 0.03         # X2: 收盘相对 MA20 平均绝对偏离上限
+X_AMP_DAYS = 20          # X3: 区间振幅回看天数
+X_AMP_MAX = 0.15         # X3: 近 N 日最高/最低振幅上限
 
 
 def _c(v):
@@ -185,6 +194,35 @@ def evaluate(ctx: dict) -> dict[str, dict]:
                'detail': 'RSI14 = {:.1f}'.format(rsi_v) if rsi_v is not None else '未就绪',
                'tier': 'strong'}
 
+    # ---------- X 震荡形态（左侧细分：横盘磨底 vs 阴跌/破位；不参与右侧门槛） ----------
+    if i >= X_FLAT_DAYS and ma20[i] is not None and ma20[i - X_FLAT_DAYS]:
+        base = ma20[i - X_FLAT_DAYS]
+        chg = abs(ma20[i] - base) / base
+        r['X1'] = {'ok': chg < X_FLAT_PCT,
+                   'detail': 'MA20 {}日变化 {:.2%} (<{:.0%})'.format(
+                       X_FLAT_DAYS, chg, X_FLAT_PCT), 'tier': 'shape'}
+    else:
+        r['X1'] = {'ok': None, 'detail': 'MA20 未就绪', 'tier': 'shape'}
+    if i >= X_DEV_DAYS - 1 and all(
+            ma20[k] is not None for k in range(i - X_DEV_DAYS + 1, i + 1)):
+        devs = [abs(close[k] - ma20[k]) / ma20[k]
+                for k in range(i - X_DEV_DAYS + 1, i + 1) if ma20[k]]
+        avg = sum(devs) / len(devs) if devs else None
+        r['X2'] = {'ok': (avg <= X_DEV_MAX) if avg is not None else None,
+                   'detail': '近{}日收盘/MA20 平均偏离 {:.2%} (≤{:.0%})'.format(
+                       X_DEV_DAYS, avg, X_DEV_MAX), 'tier': 'shape'}
+    else:
+        r['X2'] = {'ok': None, 'detail': 'MA20 未就绪', 'tier': 'shape'}
+    if i >= X_AMP_DAYS - 1:
+        hh = max(high[i - X_AMP_DAYS + 1:i + 1])
+        ll = min(low[i - X_AMP_DAYS + 1:i + 1])
+        amp = hh / ll - 1 if ll else None
+        r['X3'] = {'ok': (amp <= X_AMP_MAX) if amp is not None else None,
+                   'detail': '近{}日振幅 {:.1%} (≤{:.0%})'.format(
+                       X_AMP_DAYS, amp, X_AMP_MAX), 'tier': 'shape'}
+    else:
+        r['X3'] = {'ok': None, 'detail': '数据不足', 'tier': 'shape'}
+
     # ---------- E1/E2 板块环境（env 数据缺失时 None） ----------
     env = ctx.get('env_row')
     env_note = ctx.get('env_note', '')
@@ -231,6 +269,7 @@ def fmt_id(cid: str) -> str:
         'P1': '不再创新低', 'P1S': '低点抬升', 'P2': '箱体突破', 'P2S': '回踩不破',
         'M1': '20日线', 'M1S': '60日线三态', 'M2': 'MACD金叉', 'M2S': 'MACD 0轴上',
         'V1': '放量突破', 'V1S': '量价健康', 'R1': 'RSI≥50',
+        'X1': 'MA20走平', 'X2': '贴线震荡', 'X3': '区间收敛',
         'E1': '板块宽度/场景', 'E1S': '板块场景确认', 'E2': '板块拥挤度',
         'E3': '大盘MA20', 'F1': '非ST/停牌', 'F1F': '业绩恶化',
     }
