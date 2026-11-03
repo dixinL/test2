@@ -117,6 +117,13 @@ def init_schema(conn: sqlite3.Connection) -> None:
             pct_chg     REAL,
             PRIMARY KEY (code, trade_date)
         );
+
+        CREATE TABLE IF NOT EXISTS margin (
+            trade_date  TEXT NOT NULL,
+            rzye        REAL,
+            rqye        REAL,
+            PRIMARY KEY (trade_date)
+        );
         """)
     conn.commit()
 
@@ -322,6 +329,20 @@ def upsert_index_daily(conn, rows: Iterable[tuple]) -> int:
         '(?, ?, ?, ?, ?, ?, ?, ?, ?)',
         rows,
     )
+
+
+# ---------- margin 两融大盘汇总（单位: 亿元） ----------
+
+def upsert_margin_rows(conn, rows: Iterable[tuple]) -> int:
+    """批量写融资融券汇总。rows 每项 (trade_date, rzye, rqye)，单位亿元。"""
+    return _insert_ignore(conn, 'margin', '(trade_date, rzye, rqye)',
+                          '(?, ?, ?)', rows)
+
+
+def get_margin_max_date(conn) -> str | None:
+    """margin 表最新交易日。"""
+    row = conn.execute('SELECT MAX(trade_date) AS m FROM margin').fetchone()
+    return row['m'] if row else None
 
 
 def get_index_max_date(conn, code: str) -> Optional[str]:

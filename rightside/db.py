@@ -74,6 +74,20 @@ def load_index_close(conn, target: str) -> list[tuple[str, float]]:
     return [(r['trade_date'], r['close']) for r in rows]
 
 
+def load_margin(conn, target: str) -> list[tuple[str, float]]:
+    """融资余额沪深合计序列（亿元，升序，<= target）。
+
+    margin 表不存在（旧库未刷新过）时返回 []。"""
+    try:
+        rows = conn.execute(
+            'SELECT trade_date, rzye FROM margin'
+            ' WHERE trade_date <= ? ORDER BY trade_date', (target,)).fetchall()
+    except Exception:
+        return []
+    return [(r['trade_date'], r['rzye']) for r in rows
+            if r['rzye'] is not None]
+
+
 # ---------- 环境快照 CSV ----------
 
 def _env_dates() -> list[str]:

@@ -34,9 +34,12 @@ def _env_note(env_date: str | None, target: str) -> str:
     return '环境快照: {}（落后于判定日，已降级标注）'.format(env_date)
 
 
-def print_detail(code: str, results: dict, state: str, trend_row: dict | None):
+def print_detail(code: str, results: dict, state: str, trend_row: dict | None,
+                 aux: str = ''):
     """单股明细：逐条条件 + 明细值。"""
     print('\n=== {} 判定结果: {} ==='.format(code, state))
+    if aux:
+        print('  [辅助信号] {}（仅展示，不参与判定）'.format(aux))
     order = ['F1', 'P1', 'P1S', 'P2', 'P2S', 'M1', 'M1S', 'M2', 'M2S',
              'V1', 'V1S', 'R1', 'X1', 'X2', 'X3', 'E1', 'E1S', 'E2', 'E3', 'F1F']
     for cid in order:
@@ -55,14 +58,19 @@ def print_detail(code: str, results: dict, state: str, trend_row: dict | None):
 def run_all(conn, target: str) -> int:
     env_date, market, industries = db.load_env(target)
     trend_date, trends = db.load_trend(target)
+    margins = db.load_margin(conn, target)
     env_bundle = {'env_date': env_date, 'market': market, 'industries': industries,
-                  'trend_date': trend_date, 'trends': trends}
+                  'trend_date': trend_date, 'trends': trends,
+                  'margin': margins}
     print('[rightside] 判定日: {} | {}'.format(target, _env_note(env_date, target)))
     if market:
         print('[rightside] 市场判断: 宽度均值 {} ({}) | 拥挤度均值 {} ({}) | {}'.format(
             market.get('avg_width'), market.get('width_state'),
             market.get('avg_congestion'), market.get('congestion_state'),
             market.get('market_judgment')))
+    margin_note = rightside.fmt_margin(margins)
+    if margin_note:
+        print('[rightside] ' + margin_note)
 
     leaders = [l for l in db.load_leaders(conn)
                if l['exchange'] in ('SH', 'SZ')]
@@ -71,7 +79,7 @@ def run_all(conn, target: str) -> int:
         ctx = rightside.build_context(conn, l['code'], l['sw2'], target, env_bundle)
         if ctx.get('status_ok') is False:
             rows.append((l['code'], l['name'], l['sw2'] or '', '排除',
-                         ctx.get('status_note', '')))
+                         ctx.get('status_note', ''), ''))
             continue
         if ctx['env_row'] is None and env_date:
             unmatched.add(ctx['env_note'])
@@ -79,10 +87,14 @@ def run_all(conn, target: str) -> int:
         state = rightside.classify(results)
         if state == '排除':
             note = results['F1']['detail']
+            aux = ''
         else:
             note = rightside.failed_summary(results, state)
             if ctx.get('earnings_note'):
                 note = (note + '；' if note else '') + ctx['earnings_note']
+            # 辅助信号层（仅展示）：只对右侧观察池/候选池计算（退场参考）
+            aux = rightside.aux_warnings(ctx) \
+                if state in ('确认右侧', '弱右侧') else ''
             # 状态起点：基础数据现算（与状态列同口径的四态连续段）。
             # 左侧是兜底态（弱档任一 ❌ 即左），连续段无信息量，不显示起点
             if state == '左侧':
@@ -90,7 +102,7 @@ def run_all(conn, target: str) -> int:
             else:
                 sd, days, bounded = rightside.state_start_real(ctx, state)
                 starts[l['code']] = rightside.fmt_start(sd, days, bounded)
-        rows.append((l['code'], l['name'], l['sw2'] or '', state, note))
+        rows.append((l['code'], l['name'], l['sw2'] or '', state, note, aux))
 
     # 控制台摘要
     print('\n[rightside] === 判定摘要 (共 {} 只) ==='.format(len(rows)))
@@ -102,12 +114,13 @@ def run_all(conn, target: str) -> int:
     states.save_states(
         target, [(r[0], r[1], r[2], r[3]) for r in rows])
 
-    _write_report(target, rows, env_date, market, trend_date, unmatched, starts)
+    _write_report(target, rows, env_date, market, trend_date, unmatched,
+                  starts, margin_note)
     return 0
 
 
 def _write_report(target, rows, env_date, market, trend_date, unmatched,
-                  starts=None) -> None:
+                  starts=None, margin_note='') -> None:
     os.makedirs(REPORT_DIR, exist_ok=True)
     path = os.path.join(REPORT_DIR, 'rightside_{}.md'.format(target))
     lines = [
@@ -127,19 +140,21 @@ def _write_report(target, rows, env_date, market, trend_date, unmatched,
                 market.get('avg_width'), market.get('width_state'),
                 market.get('avg_congestion'), market.get('congestion_state')),
             '- **市场判断: {}**'.format(market.get('market_judgment')),
-            '',
         ]
+        if margin_note:
+            lines.append('- ' + margin_note)
+        lines.append('')
     for s in STATE_ORDER:
         group = [r for r in rows if r[3] == s]
         if not group:
             continue
         lines += ['## {}（{} 只）'.format(s, len(group)), '',
-                  '| 代码 | 名称 | 申万二级 | 状态起点 | 关键说明 |',
-                  '|---|---|---|---|---|']
-        for code, name, sw2, _, note in group:
+                  '| 代码 | 名称 | 申万二级 | 状态起点 | 辅助信号 | 关键说明 |',
+                  '|---|---|---|---|---|---|']
+        for code, name, sw2, _, note, aux in group:
             st = (starts or {}).get(code, '-')
-            lines.append('| {} | {} | {} | {} | {} |'.format(
-                code, name, sw2, st, note or '-'))
+            lines.append('| {} | {} | {} | {} | {} | {} |'.format(
+                code, name, sw2, st, aux or '-', note or '-'))
         lines.append('')
     if unmatched:
         lines += ['## ⚠ 行业名称对不上（需在 rightside/name_map.py 补映射）', '']
@@ -167,7 +182,7 @@ def main() -> int:
         trend_date, trends = db.load_trend(target)
         env_bundle = {'env_date': env_date, 'market': market,
                       'industries': industries, 'trend_date': trend_date,
-                      'trends': trends}
+                      'trends': trends, 'margin': db.load_margin(conn, target)}
         if args.code:
             leader = conn.execute(
                 'SELECT code, name, sw1, sw2, exchange FROM leaders WHERE code = ?',
@@ -183,7 +198,10 @@ def main() -> int:
             results = conditions.evaluate(ctx)
             state = rightside.classify(results)
             trend_row = trends.get(ctx['env_row']['sw_name']) if ctx['env_row'] else None
-            print_detail(leader['code'] + ' ' + leader['name'], results, state, trend_row)
+            aux = rightside.aux_warnings(ctx) \
+                if state in ('确认右侧', '弱右侧') else ''
+            print_detail(leader['code'] + ' ' + leader['name'], results, state,
+                         trend_row, aux)
             return 0
         return run_all(conn, target)
     finally:

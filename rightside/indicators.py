@@ -61,6 +61,22 @@ def rsi(close: list[float], n: int = 14) -> list[float | None]:
     return out
 
 
+def obv(close: list[float], vol: list[float | None]) -> list[float]:
+    """能量潮 OBV：收盘涨加当日量、跌减当日量、平盘不变（None 量按 0）。
+
+    用法：价格新高而 OBV 未同步新高 = 上攻乏力（量能未跟上）的顶背离。"""
+    out = [0.0]
+    for k in range(1, len(close)):
+        v = vol[k] or 0.0
+        if close[k] > close[k - 1]:
+            out.append(out[-1] + v)
+        elif close[k] < close[k - 1]:
+            out.append(out[-1] - v)
+        else:
+            out.append(out[-1])
+    return out
+
+
 def swing_lows(low: list[float], left: int = 2, right: int = 2) -> list[int]:
     """摆动低点索引：low[i] 严格低于左右各 left/right 邻位。"""
     out = []

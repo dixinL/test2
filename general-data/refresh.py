@@ -3,9 +3,10 @@
 把 4 张表（leaders / daily / adjust_factor / financial）的刷新集中在一个入口：
 
 用法:
-    python refresh.py                        # 日常增量（daily+因子+近两季财报）
+    python refresh.py                        # 日常增量（daily+因子+近两季财报+指数+两融）
     python refresh.py --full                 # 首灌：daily 从 2020 年起，财报从 2020Q1 起
     python refresh.py --no-financial         # 跳过财报（行情快速刷新）
+    python refresh.py --no-margin            # 跳过两融大盘汇总
     python refresh.py --financial-since 2022Q1  # 财报回填起点
     python refresh.py --daily-since 2026-09-15 # 日线回填起点（近1个月补缺）
     python refresh.py --limit 3              # 只处理前 N 只（调试/小样本验证）
@@ -170,6 +171,21 @@ def refresh_index(conn) -> int:
     return n
 
 
+def refresh_margin(conn, since=None) -> int:
+    """融资融券大盘汇总增量刷新（akshare 沪深两所，T+1 发布，失败仅告警）。
+    akshare 未安装时静默跳过。返回新增行数。"""
+    try:
+        import marginfetch
+    except ImportError as err:
+        print('[refresh] [WARN] marginfetch 导入失败，跳过两融: {}'.format(err))
+        return 0
+    try:
+        return marginfetch.fetch_and_store_margin(conn, since=since)
+    except Exception as err:
+        print('[refresh] [WARN] margin 刷新失败（不影响主流程）: {}'.format(err))
+        return 0
+
+
 def parse_quarter(s: str) -> tuple[int, int]:
     """'2022Q1'/'2022q1' -> (2022, 1)。"""
     s = s.strip().upper()
@@ -188,6 +204,10 @@ def main() -> int:
                         help='首灌：财务从 2020Q1 起（daily 本就从 2020-01-01 起）')
     parser.add_argument('--no-financial', action='store_true',
                         help='跳过财报表（行情快速刷新）')
+    parser.add_argument('--no-margin', action='store_true',
+                        help='跳过融资融券大盘汇总（marginfetch）')
+    parser.add_argument('--margin-since', type=str, default=None,
+                        help='两融回填起点 YYYYMMDD（空表默认近 120 天）')
     parser.add_argument('--financial-since', type=str, default=None,
                         help='财报回填起点，格式 2020Q1')
     parser.add_argument('--daily-since', type=str, default=None,
@@ -235,6 +255,9 @@ def main() -> int:
         refresh_financial(conn, leaders, since=since)
 
     refresh_index(conn)
+
+    if not args.no_margin:
+        refresh_margin(conn, since=args.margin_since)
 
     if args.purge:
         purge_old_data(conn, date.today())

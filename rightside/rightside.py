@@ -23,6 +23,15 @@ STRONG_IDS = ['P1S', 'P2S', 'M1S', 'M2S', 'V1S', 'R1', 'E1S', 'E3']
 PRICE_WEAK = ['P1', 'P2', 'M1', 'M2', 'V1']
 OSC_IDS = ['X1', 'X2', 'X3']       # 震荡形态条件（左侧细分，见 classify）
 
+# 辅助信号层（仅展示，不参与三态判定；调参需同步 规则.md 第十节）
+AUX_DEAD_CROSS_DAYS = 5            # MACD 死叉回看窗口
+AUX_OBV_WINDOW = 60                # OBV 顶背离观察窗口
+AUX_VOL_WINDOW = 10                # 涨时缩量观察窗口（与 V1S 同口径）
+AUX_WIDTH_SOFT_MIN = 40            # 板块结构弱：行业宽度软下限（E1 硬门槛 30 之上留缓冲）
+AUX_MARKET_WEAK_STATES = {'弱', '极弱'}   # 大盘结构弱：test1 市场宽度状态
+AUX_MARGIN_DROP_DAYS = 5           # 融资退潮：回看交易日数
+AUX_MARGIN_DROP = -0.01            # 融资退潮：5 日融资余额变化率下限（≤-1%）
+
 
 def build_context(conn, code: str, sw2: str, target: str, env_bundle: dict) -> dict:
     """构建单股判定上下文。数据不足时返回 {'status_ok': False}。"""
@@ -60,6 +69,7 @@ def build_context(conn, code: str, sw2: str, target: str, env_bundle: dict) -> d
         'ma60': ind.sma(close, 60),
         'dif': dif, 'dea': dea,
         'rsi': ind.rsi(close, 14),
+        'obv': ind.obv(close, [r['volume'] for r in valid]),
         'i': i, 'last': last,
     }
 
@@ -76,6 +86,8 @@ def build_context(conn, code: str, sw2: str, target: str, env_bundle: dict) -> d
         env_note = '(行业名对不上: {})'.format(env_name)
     ctx['env_row'] = env_row
     ctx['env_note'] = env_note
+    ctx['market'] = env_bundle.get('market')
+    ctx['margin'] = env_bundle.get('margin') or []
 
     # 业绩恶化旗标：最近两个已披露报告期 yoy_ni 均为负
     fins = [f for f in db.load_financial(conn, code)
@@ -124,6 +136,73 @@ def failed_summary(results: dict, state: str) -> str:
     fails = ['{}: {}'.format(conditions.fmt_id(x), results[x]['detail'])
              for x in tier if results.get(x, {}).get('ok') is False]
     return '；'.join(fails[:3])
+
+
+def aux_warnings(ctx: dict) -> str:
+    """辅助信号层（仅展示，不参与三态判定），返回 '·' 连接的预警串或 ''。
+
+    个股量价类：
+    - MACD死叉：近 AUX_DEAD_CROSS_DAYS 日 DIF 下穿 DEA（趋势动能转弱预警）
+    - OBV背离：近 AUX_OBV_WINDOW 日收盘创新高而 OBV 未同步新高（量价背离）
+    - 涨时缩量：近 AUX_VOL_WINDOW 日 上涨日均量 < 下跌日均量（与 V1S 同口径）
+    市场结构类（test1 env 快照，缺失时静默跳过）：
+    - 板块弱：行业宽度 < AUX_WIDTH_SOFT_MIN（宽度=行业内 MA20 上方个股占比，
+      在 E1 硬门槛 30 之上预警结构单薄）
+    - 大盘弱：市场宽度状态 ∈ AUX_MARKET_WEAK_STATES（test1 市场判断）
+    杠杆资金类（leaders.db margin 表，沪深合计融资余额，缺失时静默跳过）：
+    - 融资退潮：近 AUX_MARGIN_DROP_DAYS 日融资余额变化率 ≤ AUX_MARGIN_DROP
+    """
+    i = ctx['i']
+    warn = []
+    dif, dea = ctx['dif'], ctx['dea']
+    for d in range(max(1, i - AUX_DEAD_CROSS_DAYS + 1), i + 1):
+        if dif[d - 1] >= dea[d - 1] and dif[d] < dea[d]:
+            warn.append('MACD死叉')
+            break
+    if i >= AUX_OBV_WINDOW - 1:
+        w = AUX_OBV_WINDOW
+        closes = ctx['close'][i - w + 1:i + 1]
+        obvs = ctx['obv'][i - w + 1:i + 1]
+        if closes[-1] >= max(closes) and obvs[-1] < max(obvs):
+            warn.append('OBV背离')
+    if i >= AUX_VOL_WINDOW:
+        pct, vol = ctx['pct'], ctx['vol']
+        up_v = [vol[k] for k in range(i - AUX_VOL_WINDOW + 1, i + 1)
+                if pct[k] is not None and pct[k] > 0 and vol[k]]
+        dn_v = [vol[k] for k in range(i - AUX_VOL_WINDOW + 1, i + 1)
+                if pct[k] is not None and pct[k] < 0 and vol[k]]
+        if up_v and dn_v and sum(up_v) / len(up_v) < sum(dn_v) / len(dn_v):
+            warn.append('涨时缩量')
+    env = ctx.get('env_row')
+    if env:
+        try:
+            if float(env.get('width')) < AUX_WIDTH_SOFT_MIN:
+                warn.append('板块弱')
+        except (TypeError, ValueError):
+            pass
+    market = ctx.get('market')
+    if market and market.get('width_state') in AUX_MARKET_WEAK_STATES:
+        warn.append('大盘弱')
+    margin = ctx.get('margin') or []
+    if len(margin) > AUX_MARGIN_DROP_DAYS:
+        base = margin[-1 - AUX_MARGIN_DROP_DAYS][1]
+        if base and margin[-1][1] is not None \
+                and margin[-1][1] / base - 1 <= AUX_MARGIN_DROP:
+            warn.append('融资退潮')
+    return '·'.join(warn)
+
+
+def fmt_margin(margin: list[tuple[str, float]]) -> str:
+    """融资余额温度计展示行：'融资余额 23779.02 亿（5日 -0.9%）'。
+
+    数据不足 6 个交易日时返回空串（不展示）。"""
+    if margin and len(margin) > AUX_MARGIN_DROP_DAYS:
+        base = margin[-1 - AUX_MARGIN_DROP_DAYS][1]
+        if base:
+            chg = margin[-1][1] / base - 1
+            return '融资余额 {:.0f} 亿（{}日 {:+.1%}）'.format(
+                margin[-1][1], AUX_MARGIN_DROP_DAYS, chg)
+    return ''
 
 
 def _walk_state(results: dict) -> str:

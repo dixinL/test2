@@ -30,7 +30,7 @@ import conditions as rightside_conditions  # noqa: E402
 import rightside  # noqa: E402
 import states  # noqa: E402
 
-STATE_ORDER = ['确认右侧', '弱右侧', '价格达标(环境缺失)', '左侧', '排除']
+STATE_ORDER = ['确认右侧', '弱右侧', '价格达标(环境缺失)', '震荡', '左侧', '排除']
 
 # 近30日走势/量能色块（单行 8 档高度，每日 1 格 × 30 格；在表外代码块中展示，不挤表格）
 BLOCKS = '▁▂▃▄▅▆▇█'
@@ -75,8 +75,15 @@ def _market_section(target, lines):
             '- 宽度均值 {} ({}) | 拥挤度均值 {} ({})'.format(
                 market.get('avg_width'), market.get('width_state'),
                 market.get('avg_congestion'), market.get('congestion_state')),
-            '',
         ]
+        conn = leadersdb.connect()
+        try:
+            margin_note = rightside.fmt_margin(rightside_db.load_margin(conn, target))
+        finally:
+            conn.close()
+        if margin_note:
+            lines.append('- ' + margin_note)
+        lines.append('')
     else:
         lines += ['- 无环境快照（先运行 general-data/envfetch.py）', '']
     return lines
@@ -85,13 +92,14 @@ def _market_section(target, lines):
 def _collect(target, day):
     """对确认/弱右侧名单逐股现算明细与近30日色块图。
 
-    details[code] = (状态起点, 现收, 价图, 量图, 距60日高, 距MA20, 未过强档)。"""
+    details[code] = (状态起点, 现收, 价图, 量图, 距60日高, 距MA20, 辅助信号, 未过强档)。"""
     env_date, _market, industries = rightside_db.load_env(target)
     trend_date, trends = rightside_db.load_trend(target)
+    conn = leadersdb.connect()
     env_bundle = {'env_date': env_date, 'market': _market,
                   'industries': industries, 'trend_date': trend_date,
-                  'trends': trends}
-    conn = leadersdb.connect()
+                  'trends': trends,
+                  'margin': rightside_db.load_margin(conn, target)}
     details = {}
     try:
         for code, name, sw2, state in day:
@@ -99,7 +107,7 @@ def _collect(target, day):
                 continue
             ctx = rightside.build_context(conn, code, sw2, target, env_bundle)
             if ctx.get('status_ok') is False:
-                details[code] = ('-', '', '', '', '', '', '-')
+                details[code] = ('-', '', '', '', '', '', '', '-')
                 continue
             i = ctx['i']
             close = ctx['close'][i]
@@ -109,6 +117,7 @@ def _collect(target, day):
             d_ma = '{:+.1%}'.format(close / ma20 - 1)
             spark = _spark_close(ctx['close'])
             vspark = _spark_vol(ctx['vol'])
+            aux = rightside.aux_warnings(ctx)
             sd, days, bounded = rightside.state_start_real(ctx, state)
             start = rightside.fmt_start(sd, days, bounded)
             results = rightside_conditions.evaluate(ctx)
@@ -116,7 +125,7 @@ def _collect(target, day):
             if ctx.get('earnings_note'):
                 fails = (fails + '；' if fails != '—' else '') + ctx['earnings_note']
             details[code] = (start, '{:.2f}'.format(close), spark, vspark,
-                             d_top, d_ma, fails)
+                             d_top, d_ma, aux or '—', fails)
     finally:
         conn.close()
     return details
@@ -135,10 +144,11 @@ def _rightside_section(target, lines):
 
     groups = {s: [] for s in STATE_ORDER}
     for code, name, sw2, state in day:
-        st, close, spark, vspark, d_top, d_ma, fails = details.get(
-            code, ('-', '', '', '', '', '', '-'))
-        groups[state].append((code, name, sw2, st, close, spark, vspark,
-                              d_top, d_ma, fails))
+        # states.csv 含震荡等 STATE_ORDER 之外的状态行，setdefault 兜底不展示
+        st, close, spark, vspark, d_top, d_ma, aux, fails = details.get(
+            code, ('-', '', '', '', '', '', '', '-'))
+        groups.setdefault(state, []).append(
+            (code, name, sw2, st, close, spark, vspark, d_top, d_ma, aux, fails))
 
     counts = ' · '.join('{} {}只'.format(s, len(groups[s]))
                         for s in STATE_ORDER if groups[s])
@@ -156,14 +166,14 @@ def _rightside_section(target, lines):
         if not groups[s]:
             lines += ['无', '']
             continue
-        lines += ['| 代码 | 名称 | 申万二级 | 状态起点 | 现收 | 距60日高 | 距MA20 | 未过强档 |',
-                  '|---|---|---|---|---|---|---|---|']
-        for code, name, sw2, st, close, spark, vspark, d_top, d_ma, fails in groups[s]:
-            lines.append('| {} | {} | {} | {} | {} | {} | {} | {} |'.format(
-                code, name, sw2, st, close, d_top, d_ma, fails))
+        lines += ['| 代码 | 名称 | 申万二级 | 状态起点 | 现收 | 距60日高 | 距MA20 | 辅助信号 | 未过强档 |',
+                  '|---|---|---|---|---|---|---|---|---|']
+        for code, name, sw2, st, close, spark, vspark, d_top, d_ma, aux, fails in groups[s]:
+            lines.append('| {} | {} | {} | {} | {} | {} | {} | {} | {} |'.format(
+                code, name, sw2, st, close, d_top, d_ma, aux, fails))
         lines.append('')
         # 近30日走势/量能色块图（单行 8 档，每日 1 格，等宽代码块）
-        for code, name, sw2, st, close, spark, vspark, d_top, d_ma, fails in groups[s]:
+        for code, name, sw2, st, close, spark, vspark, d_top, d_ma, aux, fails in groups[s]:
             if not spark:
                 continue
             lines += ['**{} {}**（{} · {} · 现收 {}）'.format(code, name, s, st, close),
@@ -173,7 +183,8 @@ def _rightside_section(target, lines):
                       '```', '']
     lines += ['> 注：现收/MA20 为前复权口径；个股图为近30日色块曲线（8 档，每日 1 格，'
               '价/量各自相对窗口内自身区间归一，左旧右新）；距60日高=现收相对近60日最高价偏离（回撤深度），'
-              '距MA20=现收相对 20 日均线偏离；未过强档 = 尚未达到确认右侧的强档条件（'
+              '距MA20=现收相对 20 日均线偏离；辅助信号 = MACD死叉/OBV背离/涨时缩量（仅展示，不参与判定，'
+              '详见 rightside/规则.md 第十节）；未过强档 = 尚未达到确认右侧的强档条件（'
               '详见 rightside/规则.md）。', '']
     return lines
 

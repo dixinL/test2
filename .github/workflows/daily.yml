@@ -30,9 +30,9 @@ jobs:
       - name: 安装依赖
         run: |
           pip install --upgrade pip
-          pip install baostock certifi
+          pip install baostock certifi akshare
 
-      - name: 刷新基础数据（baostock：个股日线+因子+近两季财报+上证指数）
+      - name: 刷新基础数据（baostock：个股日线+因子+近两季财报+上证指数+两融汇总）
         working-directory: general-data
         # 每年 5 月 1 日附带清除 5 年滚动窗口外的行情数据（保留 5 年）
         run: |
