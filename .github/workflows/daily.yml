@@ -30,7 +30,7 @@ jobs:
       - name: 安装依赖
         run: |
           pip install --upgrade pip
-          pip install baostock certifi akshare
+          pip install baostock==0.9.3 certifi==2026.7.22 akshare==1.18.94 pandas==2.3.3  # 全锁版本：1.20.41+ akshare 批量改名接口，升级前需核对 swfetch/marginfetch 接口名
 
       - name: 刷新基础数据（baostock：个股日线+因子+近两季财报+上证指数+两融汇总）
         working-directory: general-data
