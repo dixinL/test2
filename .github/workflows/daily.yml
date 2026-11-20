@@ -3,8 +3,8 @@ on:
   push:
     branches: [main]
   schedule:
-    # 北京时间每天早上5点 = UTC 21:00（前一天），晚于 test1 的 3:00 环境快照，留 2 小时余量
-    - cron: "0 21 * * *"
+    # 北京时间每天早上3点 = UTC 19:00（前一天），晚于 test1 的 1:00 环境快照，留 2 小时余量
+    - cron: "0 19 * * *"
   workflow_dispatch:
 
 permissions:
